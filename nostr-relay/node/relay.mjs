@@ -9,6 +9,12 @@
 //
 // Clients publish:  ["EVENT", { kind: 20000, tags: [["d", roomId]], content, ... }]
 //          and sub: ["REQ", subId, { kinds: [20000], "#d": [roomId] }]
+//
+// POST /ice-servers serves the STUN/TURN list (see ../cf-worker/src/index.ts);
+// peers across networks need it or ICE falls back to host-only candidates.
+// Override the default public STUN list with ICE_SERVERS, a JSON array of
+// RTCIceServer objects, e.g.
+//   ICE_SERVERS='[{"urls":["stun:stun.example:3478"]},{"urls":["turn:turn.example:3478"],"username":"u","credential":"p"}]'
 
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
@@ -27,6 +33,26 @@ const MAX_SUBS_PER_CONN = 8;
 const PING = "ping";
 const PONG = "pong";
 
+// Default public STUN servers; enough for srflx candidates on common NATs. TURN
+// (needed for symmetric NATs / hard firewalls) only if configured via env.
+const DEFAULT_ICE_SERVERS = [
+	{ urls: ["stun:stun.cloudflare.com:3478"] },
+	{ urls: ["stun:stun.l.google.com:19302"] },
+];
+
+function parseIceServers() {
+	const raw = process.env.ICE_SERVERS;
+	if (!raw) return DEFAULT_ICE_SERVERS;
+	try {
+		const parsed = JSON.parse(raw);
+		if (!Array.isArray(parsed)) throw new Error("not an array");
+		return parsed.filter((s) => s && (typeof s.urls === "string" || Array.isArray(s.urls)));
+	} catch {
+		return DEFAULT_ICE_SERVERS;
+	}
+}
+const ICE_SERVERS = parseIceServers();
+
 /** True if `event` matches a single REQ `filter` (kinds, authors, #<tag>). */
 function matches(filter, event) {
 	if (filter.kinds && !filter.kinds.includes(event.kind)) return false;
@@ -42,9 +68,28 @@ function matches(filter, event) {
 
 const sockets = new Set();
 
-// Plain HTTP for the health probe; the WS server shares the same listener and
-// handles the Upgrade handshake itself.
-const httpServer = createServer((_req, res) => {
+// Plain HTTP for the health probe and the ICE mint; the WS server shares the
+// same listener and handles the Upgrade handshake itself.
+const httpServer = createServer((req, res) => {
+	if (req.method === "POST" && req.url.split("?")[0] === "/ice-servers") {
+		res.writeHead(200, {
+			"content-type": "application/json",
+			"access-control-allow-origin": "*",
+			"access-control-allow-methods": "POST, OPTIONS",
+			"access-control-allow-headers": "Content-Type",
+		});
+		res.end(JSON.stringify({ iceServers: ICE_SERVERS, ttl: 86400 }));
+		return;
+	}
+	if (req.method === "OPTIONS" && req.url.split("?")[0] === "/ice-servers") {
+		res.writeHead(204, {
+			"access-control-allow-origin": "*",
+			"access-control-allow-methods": "POST, OPTIONS",
+			"access-control-allow-headers": "Content-Type",
+		});
+		res.end();
+		return;
+	}
 	res.writeHead(200, { "content-type": "text/plain" });
 	res.end("bramble signaling relay");
 });

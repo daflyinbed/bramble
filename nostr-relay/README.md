@@ -20,6 +20,11 @@ node nostr-relay/node/relay.mjs            # ws://localhost:7400
 PORT=9000 node nostr-relay/node/relay.mjs  # custom port
 ```
 
+`POST /ice-servers` (same origin as the relay URL) serves the STUN/TURN list the
+client needs for cross-network peers, defaulting to public STUN; override with
+`ICE_SERVERS` (JSON array of `RTCIceServer`). Without it the client silently
+falls back to host-only candidates, which only connect same-network devices.
+
 ## Run in Docker
 
 Same relay as a container (non-root, with a healthcheck on the HTTP probe):
