@@ -33,6 +33,25 @@ const MAX_SUBS_PER_CONN = 8;
 const PING = "ping";
 const PONG = "pong";
 
+// Structured trace: every connection, REQ, EVENT fan-out and HTTP hit on one
+// line, so a failed sync can be followed end-to-end. Room ids are HMACs and
+// author pubkeys are already public on the wire, so 8-char prefixes identify a
+// session without leaking anything the relay doesn't see by design; payload
+// content is ciphertext and logged as a byte size only.
+const log = (...args) => console.log(new Date().toISOString(), ...args);
+const short = (s) => String(s ?? "").slice(0, 8);
+
+// The relay may sit behind a reverse proxy/CDN (e.g. a self-host fronted by an
+// edge service), where the socket address is the edge node, not the client. Such
+// proxies APPEND the address they see to X-Forwarded-For, so the last entry is
+// the one added by the trusted hop closest to us; client-supplied entries in
+// front of it are spoofable. Informational only — never gate on it.
+const clientOf = (req) => {
+	const xff = req.headers["x-forwarded-for"];
+	const last = typeof xff === "string" ? xff.split(",").pop().trim() : "";
+	return last ? `${req.socket.remoteAddress} xff=${last}` : req.socket.remoteAddress;
+};
+
 // Default public STUN servers; enough for srflx candidates on common NATs. TURN
 // (needed for symmetric NATs / hard firewalls) only if configured via env.
 const DEFAULT_ICE_SERVERS = [
@@ -47,7 +66,8 @@ function parseIceServers() {
 		const parsed = JSON.parse(raw);
 		if (!Array.isArray(parsed)) throw new Error("not an array");
 		return parsed.filter((s) => s && (typeof s.urls === "string" || Array.isArray(s.urls)));
-	} catch {
+	} catch (e) {
+		log(`ICE_SERVERS invalid (${e.message}); falling back to defaults`);
 		return DEFAULT_ICE_SERVERS;
 	}
 }
@@ -67,11 +87,13 @@ function matches(filter, event) {
 }
 
 const sockets = new Set();
+let connSeq = 0;
 
 // Plain HTTP for the health probe and the ICE mint; the WS server shares the
 // same listener and handles the Upgrade handshake itself.
 const httpServer = createServer((req, res) => {
 	if (req.method === "POST" && req.url.split("?")[0] === "/ice-servers") {
+		log(`http  ice-servers  ${clientOf(req)}`);
 		res.writeHead(200, {
 			"content-type": "application/json",
 			"access-control-allow-origin": "*",
@@ -96,19 +118,29 @@ const httpServer = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
 	ws.subs = new Map(); // per-connection: subId -> filters
+	const id = `conn${String(++connSeq).padStart(3, "0")}`;
+	const openedAt = Date.now();
 	sockets.add(ws);
-	ws.on("close", () => sockets.delete(ws));
+	log(`${id} open  ${clientOf(req)} (${sockets.size} peers)`);
+	ws.on("close", () => {
+		sockets.delete(ws);
+		log(`${id} close ${Math.round((Date.now() - openedAt) / 1000)}s (${sockets.size} peers)`);
+	});
 
 	ws.on("message", (raw) => {
-		if (raw.length > MAX_MSG_BYTES) return;
+		if (raw.length > MAX_MSG_BYTES) {
+			log(`${id} drop  frame ${raw.length}B > ${MAX_MSG_BYTES}B`);
+			return;
+		}
 		if (raw.toString() === PING) return ws.send(PONG);
 
 		let msg;
 		try {
 			msg = JSON.parse(raw.toString());
 		} catch {
+			log(`${id} drop  unparseable ${raw.length}B`);
 			return;
 		}
 		if (!Array.isArray(msg)) return;
@@ -116,8 +148,12 @@ wss.on("connection", (ws) => {
 
 		if (type === "REQ") {
 			const [, subId, ...filters] = msg;
-			if (!ws.subs.has(subId) && ws.subs.size >= MAX_SUBS_PER_CONN) return;
+			if (!ws.subs.has(subId) && ws.subs.size >= MAX_SUBS_PER_CONN) {
+				log(`${id} drop  REQ ${short(subId)}: over ${MAX_SUBS_PER_CONN} subs`);
+				return;
+			}
 			ws.subs.set(subId, filters);
+			log(`${id} REQ   ${short(subId)} rooms=${filters.map((f) => short(f?.["#d"]?.[0])).join(",") || "?"}`);
 			ws.send(JSON.stringify(["EOSE", subId])); // no stored events: ephemeral only
 			return;
 		}
@@ -127,25 +163,30 @@ wss.on("connection", (ws) => {
 		}
 		if (type === "EVENT") {
 			const event = msg[1];
+			const room = short(event?.tags?.find((t) => t?.[0] === "d")?.[1]);
 			if (!event || event.kind < 20000 || event.kind >= 30000) {
+				log(`${id} rej   kind=${event?.kind} room=${room}`);
 				ws.send(JSON.stringify(["OK", event?.id ?? "", false, "only ephemeral kinds"]));
 				return;
 			}
 			// Fan out to every other socket's matching subscription; store nothing.
+			let fanout = 0;
 			for (const peer of sockets) {
 				if (peer === ws) continue;
 				for (const [subId, filters] of peer.subs) {
 					if (filters.some((f) => matches(f, event))) {
 						peer.send(JSON.stringify(["EVENT", subId, event]));
+						fanout++;
 						break;
 					}
 				}
 			}
+			log(`${id} EVENT kind=${event.kind} room=${room} author=${short(event.pubkey)} ${raw.length}B -> ${fanout} peer(s)`);
 			ws.send(JSON.stringify(["OK", event.id ?? "", true, ""]));
 		}
 	});
 });
 
 httpServer.listen(PORT, () => {
-	console.log(`bramble signaling relay on ws://localhost:${PORT}`);
+	log(`bramble signaling relay on ws://localhost:${PORT} (${ICE_SERVERS.length} ice server entries)`);
 });
