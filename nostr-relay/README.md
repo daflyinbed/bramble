@@ -20,6 +20,16 @@ node nostr-relay/node/relay.mjs            # ws://localhost:7400
 PORT=9000 node nostr-relay/node/relay.mjs  # custom port
 ```
 
+## Run in Docker
+
+Same relay as a container (non-root, with a healthcheck on the HTTP probe):
+
+```sh
+docker build -t bramble-relay nostr-relay/node
+docker run -d --name bramble-relay -p 7400:7400 --restart unless-stopped bramble-relay
+# custom port: -p 9000:9000 -e PORT=9000
+```
+
 ## Deploy to Cloudflare Workers
 
 `cf-worker/` is the same relay as a Cloudflare Worker backed by a Durable
