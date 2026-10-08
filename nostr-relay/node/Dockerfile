@@ -21,4 +21,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 	CMD wget -qO /dev/null http://127.0.0.1:${PORT:-7400}/ || exit 1
 
 EXPOSE 7400
+# relay.mjs handles SIGTERM and closes active connections when running as PID 1.
 CMD ["node", "relay.mjs"]
