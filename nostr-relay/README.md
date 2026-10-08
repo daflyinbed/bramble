@@ -64,6 +64,8 @@ as `base64(HMAC-SHA1(TURN_SECRET, username))`. The TURN server verifies the cred
 and expiry; the shared secret stays on the servers. `TURN_TTL_SECONDS`
 defaults to 86400 (24 hours), matching the hosted Worker, and accepts an integer
 from 1 to 86400. `turns:` additionally requires TLS configured on the TURN server.
+Clients fetch credentials before each new WebRTC connection, including late
+pairing attempts and reconnects, so a running sync session can outlive this TTL.
 
 For Docker, put `ICE_SERVERS`, `TURN_SECRET` and optional `TURN_TTL_SECONDS`
 in an environment file and pass `--env-file /path/to/relay.env`. Docker env
