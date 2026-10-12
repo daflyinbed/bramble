@@ -49,7 +49,7 @@ test("a mouse wheel scrolls settings tabs and releases the page at the edge", as
 	await expect.poll(() => settingsPage.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
-test("settings edge arrows scroll with mouse clicks and keyboard activation", async ({
+test("settings edge arrows scroll with mouse clicks while tabs stay keyboard accessible", async ({
 	context,
 	extensionId,
 }) => {
@@ -76,13 +76,24 @@ test("settings edge arrows scroll with mouse clicks and keyboard activation", as
 	await expect.poll(() => tabs.evaluate((el) => el.scrollLeft)).toBe(0);
 	await expect(left).toHaveCount(0);
 
-	await right.focus();
-	await page.keyboard.press("Enter");
+	await tabs.getByRole("button", { name: "General", exact: true }).focus();
+	for (const name of ["Security", "Backups", "Aliases", "Sync", "About"]) {
+		await page.keyboard.press("Tab");
+		await expect(tabs.getByRole("button", { name, exact: true })).toBeFocused();
+	}
 	await expect.poll(() => tabs.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
 	await expect(tabs.getByRole("button", { name: "General", exact: true })).toHaveAttribute(
 		"aria-current",
 		"true",
 	);
+	// The edge arrows must not intercept Tab or Shift+Tab after the last section.
+	await page.keyboard.press("Tab");
+	await expect(page.getByRole("textbox", { name: "Vault name", exact: true })).toBeFocused();
+	await page.keyboard.press("Shift+Tab");
+	const about = tabs.getByRole("button", { name: "About", exact: true });
+	await expect(about).toBeFocused();
+	await page.keyboard.press("Enter");
+	await expect(about).toHaveAttribute("aria-current", "true");
 });
 
 test("settings tabs keep native horizontal and Shift-wheel scrolling", async ({

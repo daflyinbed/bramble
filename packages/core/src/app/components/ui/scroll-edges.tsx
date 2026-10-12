@@ -68,16 +68,11 @@ export function useScrollEdges<T extends HTMLElement>(): {
 }
 
 /** The fade + scroll button over each hidden edge. The parent must be `relative`. */
-export function ScrollEdgeFades({
-	edges,
-	scrollRef,
-}: {
-	edges: ScrollEdges;
-	scrollRef: RefObject<HTMLElement | null>;
-}) {
+export function ScrollEdgeFades({ strip }: { strip: ReturnType<typeof useScrollEdges> }) {
+	const { ref, edges } = strip;
 	const { t } = useLingui();
 	const scroll = (direction: number) => {
-		const el = scrollRef.current;
+		const el = ref.current;
 		if (!el) return;
 		el.scrollBy({
 			left: direction * el.clientWidth * 0.75,
@@ -92,6 +87,7 @@ export function ScrollEdgeFades({
 				<div className="pointer-events-none absolute inset-y-0 left-0 flex w-12 items-center bg-gradient-to-r from-background via-background to-transparent">
 					<button
 						type="button"
+						tabIndex={-1}
 						className={buttonClass}
 						onClick={() => scroll(-1)}
 						aria-label={t`Scroll left`}
@@ -105,6 +101,7 @@ export function ScrollEdgeFades({
 				<div className="pointer-events-none absolute inset-y-0 right-0 flex w-12 items-center justify-end bg-gradient-to-l from-background via-background to-transparent">
 					<button
 						type="button"
+						tabIndex={-1}
 						className={buttonClass}
 						onClick={() => scroll(1)}
 						aria-label={t`Scroll right`}
