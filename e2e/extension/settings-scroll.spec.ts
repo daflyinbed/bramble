@@ -96,10 +96,7 @@ test("settings edge arrows scroll with mouse clicks while tabs stay keyboard acc
 	await expect(about).toHaveAttribute("aria-current", "true");
 });
 
-test("settings tabs keep native horizontal and Shift-wheel scrolling", async ({
-	context,
-	extensionId,
-}) => {
+test("settings tabs keep native horizontal scrolling", async ({ context, extensionId }) => {
 	const page = await context.newPage();
 	const tabs = await openSettings(page, extensionId);
 
@@ -108,14 +105,6 @@ test("settings tabs keep native horizontal and Shift-wheel scrolling", async ({
 	await expect.poll(() => tabs.evaluate((el) => el.scrollLeft)).toBe(40);
 	await page.mouse.wheel(-40, 0);
 	await expect.poll(() => tabs.evaluate((el) => el.scrollLeft)).toBe(0);
-
-	await page.keyboard.down("Shift");
-	try {
-		await page.mouse.wheel(0, 40);
-		await expect.poll(() => tabs.evaluate((el) => el.scrollLeft)).toBe(40);
-	} finally {
-		await page.keyboard.up("Shift");
-	}
 });
 
 for (const shift of [false, true]) {
